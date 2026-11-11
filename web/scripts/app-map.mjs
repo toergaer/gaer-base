@@ -22,6 +22,15 @@ const catalogFile = resolve(web, "../specs/mcp/catalog.json");
 const manifestFile = join(src, "routes.json");
 const serverManifest = resolve(web, "../server/app/routes.json");
 const docs = [{ file: resolve(web, "../.gaer/agents/instructions.md"), lang: "en" }, { file: resolve(web, "../README.md"), lang: "da" }];
+// The Docker build copies only web/ (to /web), so the server, specs and docs are not there. The routes in web/src are
+// still checked; the generated files, route tables and catalog links are checked by npm run build in the full checkout
+// (test.yml on every PR).
+const fullCheckout = [catalogFile, resolve(web, "../server/app"), ...docs.map((d) => d.file)].every((f) => existsSync(f));
+const check = process.argv.includes("--check");
+if (!fullCheckout && !check) {
+  console.error("app-map: run it from the full repository (server/, specs/, README.md and .gaer/ next to web/)");
+  process.exit(1);
+}
 
 const read = (f) => readFileSync(f, "utf8");
 
@@ -180,7 +189,7 @@ function table(lang) {
     : "<!-- Genereret fra web/src/routes.json af npm run app-map --prefix web — ret manifestet, ikke tabellen. -->",
     head, ...rows, "", `<details><summary>${summary} (${manifest.routes.length})</summary>`, "", allHead, ...all, "", "</details>"].join("\n");
 }
-const docTexts = docs.map(({ file, lang }) => {
+const docTexts = !fullCheckout ? [] : docs.map(({ file, lang }) => {
   const current = read(file);
   const start = current.indexOf("<!-- routes:start -->"), end = current.indexOf("<!-- routes:end -->");
   if (start < 0 || end < start) { problems.push(`${file}: missing <!-- routes:start --> / <!-- routes:end -->`); return { file, current, next: current }; }
@@ -189,7 +198,7 @@ const docTexts = docs.map(({ file, lang }) => {
 });
 
 // Every catalog link must resolve.
-const catalog = JSON.parse(read(catalogFile));
+const catalog = fullCheckout ? JSON.parse(read(catalogFile)) : { tools: [] };
 const routeFor = (section) => {
   const path = section.replace(/\{\w+\}/g, "1");
   return Object.entries(map.routes).find(([p]) => new RegExp(`^${p.replace(/:\w+/g, "[^/]+")}$`).test(path))?.[1];
@@ -207,7 +216,9 @@ for (const t of catalog.tools) {
   }
 }
 
-if (process.argv.includes("--check")) {
+if (check && !fullCheckout) {
+  console.log(`routes.json: ${manifest.routes.length} routes checked (web/ only — generated files and docs are checked in the full checkout)`);
+} else if (check) {
   const stale = (file, want) => !existsSync(file) || read(file) !== want;
   if (stale(out, text)) problems.push("server/app/mcp/app_map.json is out of date — run npm run app-map --prefix web");
   if (stale(serverManifest, serverText)) problems.push("server/app/routes.json is out of date — run npm run app-map --prefix web");
